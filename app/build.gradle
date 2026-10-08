@@ -1,0 +1,57 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Número de compilación de GitHub = versionCode (así cada APK nuevo se instala encima del anterior)
+def runNumber = Integer.parseInt(System.getenv('GITHUB_RUN_NUMBER') ?: '1')
+def ksFile = rootProject.file('keystore/release.jks')
+def ksPass = System.getenv('KS_PASS') ?: 'apkstudio'
+
+android {
+    namespace = 'com.dafnedaniela.app'
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = 'com.dafnedaniela.app'
+        minSdk = 21
+        targetSdk = 34
+        versionCode = runNumber
+        versionName = '1.0.0'
+    }
+
+    signingConfigs {
+        release {
+            if (ksFile.exists()) {
+                storeFile = ksFile
+                storePassword = ksPass
+                keyAlias = 'app'
+                keyPassword = ksPass
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = false
+            if (ksFile.exists()) {
+                signingConfig = signingConfigs.release
+            } else {
+                signingConfig = signingConfigs.debug
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+
+    androidResources {
+        ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+    }
+}

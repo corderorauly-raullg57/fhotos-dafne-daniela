@@ -1,0 +1,84 @@
+# Generado por APK Studio: compila la app Android automáticamente en GitHub
+name: Crear APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el proyecto
+        uses: actions/checkout@v4
+
+      - name: Preparar Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Preparar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Preparar Android SDK
+        run: |
+          set -o pipefail
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          echo "Android SDK en: $SDK" | tee build.log
+          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then echo "ERROR: este ordenador de GitHub no tiene Android SDK" | tee -a build.log; exit 1; fi
+          echo "sdk.dir=$SDK" > local.properties
+          SM=$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
+          if [ -n "$SM" ]; then
+            yes | "$SM" --licenses > /dev/null 2>&1 || true
+            "$SM" "platforms;android-34" "build-tools;34.0.0" 2>&1 | tail -3 | tee -a build.log || true
+          fi
+
+      - name: Crear la llave de firma (solo la primera vez)
+        run: |
+          if [ ! -f keystore/release.jks ]; then
+            mkdir -p keystore
+            keytool -genkeypair -keystore keystore/release.jks -alias app -keyalg RSA -keysize 2048 -validity 10000 -storepass apkstudio -keypass apkstudio -dname "CN=APK Studio, O=App, C=ES"
+            git config user.name "apk-studio"
+            git config user.email "apk-studio@users.noreply.github.com"
+            git add keystore/release.jks
+            git commit -m "Llave de firma de la app (no borrar: hace falta para actualizar)"
+            git push origin HEAD:main || echo "No se pudo guardar la llave en el repositorio"
+          fi
+
+      - name: Compilar el APK
+        run: |
+          set -o pipefail
+          gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Explicar el error
+        if: failure()
+        run: |
+          touch build.log
+          awk '/What went wrong/{f=1} f{print} /^\* Try:/{f=0}' build.log | grep -v '^\* Try' | head -30 > err.txt
+          grep -E "error:|ERROR:|AAPT|e: |Exception:" build.log | grep -v "^\s*at " | head -15 >> err.txt
+          [ -s err.txt ] || tail -40 build.log > err.txt
+          [ -s err.txt ] || echo "El paso anterior falló antes de compilar (sin registro)." > err.txt
+          msg=$(head -c 4000 err.txt | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=APKSTUDIO::$msg"
+
+      - name: Preparar el archivo
+        run: cp app/build/outputs/apk/release/app-release.apk "dafne-daniela.apk"
+
+      - name: Guardar el APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: "dafne-daniela.apk"
+
+      - name: Publicar la descarga
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${{ github.run_number }}" "dafne-daniela.apk" --title "Dafne Daniela · versión ${{ github.run_number }}" --notes "APK generado con APK Studio. Descárgalo desde el móvil e instálalo." --latest
